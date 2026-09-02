@@ -1,0 +1,50 @@
+services:
+  library-news-access:
+    build: .
+    container_name: library-news-access
+    restart: unless-stopped
+    ports:
+      - "8781:8781"
+    environment:
+      # --- Library card (required) ---
+      - LNA_CARD_NUMBER=${LNA_CARD_NUMBER:-}
+      - LNA_CONNECT_BASE=${LNA_CONNECT_BASE:-https://mhl.org/connect}
+      # --- Newspaper account identity (required for renewable providers) ---
+      - LNA_FIRST_NAME=${LNA_FIRST_NAME:-}
+      - LNA_LAST_NAME=${LNA_LAST_NAME:-}
+      - LNA_EMAIL=${LNA_EMAIL:-}
+      - LNA_PASSWORD=${LNA_PASSWORD:-}
+      # --- Scheduling ---
+      - LNA_CHECK_MINUTES=${LNA_CHECK_MINUTES:-30}
+      - LNA_RENEW_MARGIN_HOURS=${LNA_RENEW_MARGIN_HOURS:-24}
+      - LNA_RUN_ON_START=${LNA_RUN_ON_START:-true}
+      - LNA_ONLY_PROVIDERS=${LNA_ONLY_PROVIDERS:-}
+      # --- MQTT / Home Assistant (optional; EMQX on VLAN 20) ---
+      - MQTT_HOST=${MQTT_HOST:-}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      - MQTT_BASE_TOPIC=${MQTT_BASE_TOPIC:-library/news-access}
+      - HA_DISCOVERY_PREFIX=${HA_DISCOVERY_PREFIX:-homeassistant}
+      # --- Alerting (optional) ---
+      - LNA_NTFY_URL=${LNA_NTFY_URL:-}
+      - LNA_NTFY_TOPIC=${LNA_NTFY_TOPIC:-}
+      - LNA_NTFY_USERNAME=${LNA_NTFY_USERNAME:-}
+      - LNA_NTFY_PASSWORD=${LNA_NTFY_PASSWORD:-}
+      - LNA_NTFY_TOKEN=${LNA_NTFY_TOKEN:-}
+      - LNA_KUMA_PUSH_URL=${LNA_KUMA_PUSH_URL:-}
+      # --- Runtime ---
+      - LNA_LOG_LEVEL=${LNA_LOG_LEVEL:-INFO}
+    volumes:
+      - library_news_access_data:/data
+      # Uncomment to add newspapers without rebuilding the image:
+      # - ./providers.json:/app/providers.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8781/health', timeout=10).status==200 else 1)"]
+      interval: 5m
+      timeout: 20s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  library_news_access_data:

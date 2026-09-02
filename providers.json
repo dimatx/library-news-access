@@ -1,0 +1,45 @@
+[
+  {
+    "id": "boston_globe",
+    "name": "Boston Globe",
+    "db_id": "37577",
+    "mode": "ez_register",
+    "enabled": true,
+    "access_hours": 72,
+    "renew_every_hours": 24,
+    "registrar_hosts": ["manage.bostonglobe.com"],
+    "success_hosts": ["bostonglobe.com"],
+    "field_map": {
+      "first_name": ["txtFirst"],
+      "last_name": ["txtLast"],
+      "email": ["txtEmail"],
+      "password": ["txtPassword", "txtVerifyPassword"]
+    },
+    "notes": "Rolling 72-hour access. The form must be resubmitted before it lapses; that is the whole reason this service exists."
+  },
+
+  {
+    "id": "new_york_times",
+    "name": "The New York Times",
+    "db_id": "20528",
+    "mode": "link_only",
+    "enabled": false,
+    "notes": "Static gift code redeemed once against your NYT login. Not a rolling window, so there is nothing to renew. Enable only if you want the current redemption link surfaced."
+  },
+  {
+    "id": "wall_street_journal",
+    "name": "The Wall Street Journal",
+    "db_id": "3969",
+    "mode": "link_only",
+    "enabled": false,
+    "notes": "Static partner redemption link; requires an interactive WSJ login to redeem."
+  },
+  {
+    "id": "washington_post",
+    "name": "The Washington Post",
+    "db_id": "3970",
+    "mode": "link_only",
+    "enabled": false,
+    "notes": "Static special-offer sign-in link; requires an interactive Post login to redeem."
+  }
+]
