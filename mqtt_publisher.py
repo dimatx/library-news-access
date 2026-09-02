@@ -1,9 +1,15 @@
 """MQTT publisher with Home Assistant MQTT Discovery.
 
-One HA device ("Library News Access") with, per newspaper:
-  - <name> access status   (sensor: ok / failed, plus attributes)
-  - <name> access expires  (sensor, timestamp)   -- renewable providers only
-  - <name> access active   (binary_sensor)       -- renewable providers only
+One HA device *per newspaper*, each with:
+  - Access status   (sensor: ok / failed, plus attributes)
+  - Access expires  (sensor, timestamp)   -- renewable providers only
+  - Access active   (binary_sensor)       -- renewable providers only
+
+MQTT discovery enables `has_entity_name` automatically for entities that carry
+a device, so the displayed name is "<device> <entity>" -- e.g. device "Boston
+Globe" + entity "Access expires" gives `sensor.boston_globe_access_expires`.
+Keep the device name the newspaper and the entity name the bare role, or the
+newspaper ends up repeated in every entity_id.
 
 Publishing is best-effort: a broker outage must never stop a renewal.
 """
@@ -20,12 +26,14 @@ import state
 
 _LOGGER = logging.getLogger(__name__)
 
-_DEVICE = {
-    "identifiers": ["library_news_access"],
-    "name": "Library News Access",
-    "manufacturer": "Memorial Hall Library",
-    "model": "Newspaper pass renewal",
-}
+
+def _device(provider) -> dict:
+    return {
+        "identifiers": [f"lna_{provider.id}"],
+        "name": provider.name,
+        "manufacturer": "Memorial Hall Library",
+        "model": "Newspaper pass",
+    }
 
 
 def enabled() -> bool:
@@ -98,13 +106,13 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
         "sensor",
         status_id,
         {
-            "name": f"{provider.name} access status",
+            "name": "Access status",
             "unique_id": status_id,
             "icon": "mdi:newspaper-variant-outline",
             "state_topic": f"{base}/status/state",
             "json_attributes_topic": f"{base}/status/attributes",
             "availability_topic": avail,
-            "device": _DEVICE,
+            "device": _device(provider),
         },
         "ok" if entry.get("ok") else "failed",
     ))
@@ -121,13 +129,13 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
             "sensor",
             expires_id,
             {
-                "name": f"{provider.name} access expires",
+                "name": "Access expires",
                 "unique_id": expires_id,
                 "device_class": "timestamp",
                 "icon": "mdi:clock-outline",
                 "state_topic": f"{base}/expires/state",
                 "availability_topic": avail,
-                "device": _DEVICE,
+                "device": _device(provider),
             },
             expires.isoformat(timespec="seconds") if expires else "",
         ))
@@ -137,12 +145,12 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
             "binary_sensor",
             active_id,
             {
-                "name": f"{provider.name} access active",
+                "name": "Access active",
                 "unique_id": active_id,
                 "device_class": "connectivity",
                 "state_topic": f"{base}/active/state",
                 "availability_topic": avail,
-                "device": _DEVICE,
+                "device": _device(provider),
             },
             "ON" if (expires and expires > now) else "OFF",
         ))

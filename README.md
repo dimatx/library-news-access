@@ -97,8 +97,8 @@ Per-provider identity overrides use the provider id, e.g.
 
 ## Home Assistant
 
-With `MQTT_HOST` set, MQTT discovery creates one device, **Library News
-Access**, with per newspaper:
+With `MQTT_HOST` set, MQTT discovery creates **one device per newspaper** — so
+adding a paper adds a device rather than more prefixes on a shared one:
 
 - `sensor.boston_globe_access_status` — `ok` / `failed`, with the last message,
   failure streak, and notes as attributes
