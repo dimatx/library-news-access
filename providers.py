@@ -52,6 +52,9 @@ class Provider:
     success_hosts: list[str] = field(default_factory=list)
     field_map: dict[str, list[str]] = field(default_factory=dict)
     notes: str = ""
+    # --- nyt_redeem ---
+    cookie_file: str = ""
+    entitlement: str = ""
 
     @property
     def needs_account(self) -> bool:
@@ -220,9 +223,84 @@ def _run_link_only(provider: Provider, session: requests.Session, card: str) -> 
     }
 
 
+def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) -> dict:
+    """Redeem the library's NYT access code against a stored browser session."""
+    import nyt
+
+    cookie_file = provider.cookie_file or config.NYT_COOKIE_FILE
+    try:
+        nyt.load_cookies(session, cookie_file)
+    except nyt.SessionExpired as exc:
+        raise ConnectorError(str(exc)) from exc
+
+    # The library mints the redirect that carries the access code, so the card
+    # still has to be presented every time.
+    location, _ = post_card(session, provider.db_id, card, follow=False)
+
+    try:
+        access_code, campaign_id = nyt.parse_redeem_url(location)
+        state = nyt.account_state(session, campaign_id)
+    except nyt.SessionExpired as exc:
+        raise ConnectorError(str(exc)) from exc
+
+    wanted = provider.entitlement or "AAA"
+    already_entitled = state.get("has_active") and wanted in (state.get("entitlements") or [])
+
+    now = datetime.now(timezone.utc)
+
+    if already_entitled:
+        # Nothing to do. Redeeming now would only return 'already redeemed'.
+        return {
+            "ok": True,
+            "message": f"Pass active until {state.get('expires_at') or 'unknown'}",
+            "url": location,
+            "renewed_at": now.isoformat(timespec="seconds"),
+            "expires_at": state.get("expires_at"),
+            "keep_expires": state.get("expires_at") is None,
+        }
+
+    try:
+        result = nyt.redeem(session, access_code, campaign_id)
+    except nyt.SessionExpired as exc:
+        raise ConnectorError(str(exc)) from exc
+
+    if result.get("already_active"):
+        # NYT disagrees with the data layer (usually propagation lag). Re-read
+        # so the expiry we publish comes from NYT rather than a guess.
+        try:
+            state = nyt.account_state(session, campaign_id)
+        except nyt.SessionExpired:
+            state = {}
+        return {
+            "ok": True,
+            "message": "Code already redeemed; pass still active",
+            "url": location,
+            "renewed_at": now.isoformat(timespec="seconds"),
+            "expires_at": state.get("expires_at"),
+            "keep_expires": state.get("expires_at") is None,
+        }
+
+    expires_at = result.get("expires_at")
+    days = result.get("duration_days")
+    if not expires_at and provider.access_hours:
+        expires_at = (
+            now + timedelta(hours=provider.access_hours)
+        ).isoformat(timespec="seconds")
+
+    return {
+        "ok": True,
+        "message": f"Redeemed {result.get('subscription_name') or 'access'}"
+                   + (f" for {days} day(s)" if days else ""),
+        "url": location,
+        "renewed_at": now.isoformat(timespec="seconds"),
+        "expires_at": expires_at,
+    }
+
+
 _RUNNERS = {
     "ez_register": _run_ez_register,
     "link_only": _run_link_only,
+    "nyt_redeem": _run_nyt_redeem,
 }
 
 

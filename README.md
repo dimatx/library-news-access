@@ -10,20 +10,20 @@ form again, on a timer, and tells Home Assistant how long you have left.
 
 ## What it does and does not automate
 
-Every newspaper MHL offers was measured before any code was written (see
-[FINDINGS.md](FINDINGS.md)). Only one of them is a renewal treadmill:
+Every newspaper MHL offers was measured by replaying the flow (see
+[FINDINGS.md](FINDINGS.md)). **All of them are rolling passes**, not one-shot
+codes:
 
-| Newspaper | Automated? | Why |
+| Newspaper | Pass length | Automated? |
 |---|---|---|
-| **Boston Globe** | **Yes** | Rolling 72-hour entitlement on an account you own. Expires constantly. |
-| New York Times | No (link only) | Static gift code, redeemed once against your NYT login. |
-| Wall Street Journal | No (link only) | Static partner redemption link, needs an interactive login. |
-| Washington Post | No (link only) | Static special-offer link, needs an interactive login. |
-| Eagle Tribune (NewsBank) | **No** | Card entry mints a throwaway browsing session. No account, no entitlement, nothing to keep alive. |
+| **Boston Globe** | 72 hours | **Yes** — resubmits the registration form |
+| **New York Times** | 24 hours | **Yes** — redeems the bulk certificate |
+| Wall Street Journal | 3 days | Not yet built |
+| Washington Post | 7 days | Not yet built |
+| Eagle Tribune (NewsBank) | none | **No** — no account, just a throwaway session |
 
-The three `link_only` providers ship **disabled**. Enable them only if you want
-the current redemption URL surfaced on the status page; they are not renewals
-and re-running them achieves nothing.
+Eagle Tribune is the only permanent exclusion: card entry mints a browsing
+session with no account behind it, so there is nothing to keep alive.
 
 ## Quick start
 
@@ -45,6 +45,32 @@ docker compose run --rm library-news-access python cli.py --list
 > The Globe's form says **"Create Account"** even though you already have one.
 > Submitting it with your existing email and password is the intended way to
 > re-up access — that is exactly what the manual process does.
+
+## New York Times setup
+
+NYT needs one extra thing: a browser session. Its login page is behind
+DataDome, so this service **never attempts to log in**. You capture a session
+once, and it reuses it.
+
+1. Open an **incognito window** and log in at nytimes.com
+2. Export cookies with an extension such as "Get cookies.txt LOCALLY",
+   scoped to `nytimes.com`
+3. **Close the window without signing out** (signing out kills the session you
+   just captured)
+4. Drop the file in the data volume as `nyt_cookies.txt`:
+
+```bash
+docker cp nytimes.com_cookies.txt library-news-access:/data/nyt_cookies.txt
+```
+
+Renewal is driven by **live entitlement state**, not a timer: each tick asks
+NYT whether the pass is still active and only redeems when it is not. The real
+expiry comes back from NYT, so the Home Assistant sensor shows their date
+rather than a guess.
+
+The session cookie is long-lived (roughly a year) and every run refreshes it,
+but it will not last forever. When it dies the provider fails loudly rather
+than silently stopping, so re-export and re-copy the file.
 
 ## Deployment
 

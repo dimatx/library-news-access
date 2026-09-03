@@ -70,6 +70,13 @@ USER_AGENT = _clean(
 # without rebuilding the image.
 PROVIDERS_FILE = _clean(os.environ.get("LNA_PROVIDERS_FILE", "")) or None
 
+# Netscape cookies.txt exported from a logged-in NYT browser session. NYT's
+# login page is behind bot protection, so the session is captured once by hand
+# rather than scripted. Lives in the data volume, not the image.
+NYT_COOKIE_FILE = _clean(
+    os.environ.get("LNA_NYT_COOKIE_FILE", "")
+) or os.path.join(_clean(os.environ.get("LNA_DATA_DIR", "/data")), "nyt_cookies.txt")
+
 # Comma-separated provider ids. When set, only these run (overrides the
 # "enabled" flag in providers.json).
 ONLY_PROVIDERS = [

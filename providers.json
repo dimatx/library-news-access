@@ -15,24 +15,29 @@
       "email": ["txtEmail"],
       "password": ["txtPassword", "txtVerifyPassword"]
     },
-    "notes": "Rolling 72-hour access. The form must be resubmitted before it lapses; that is the whole reason this service exists."
+    "notes": "Rolling 72-hour access. Resubmitting the registration form for an existing account is the intended way to re-up it."
   },
 
   {
     "id": "new_york_times",
     "name": "The New York Times",
     "db_id": "20528",
-    "mode": "link_only",
-    "enabled": false,
-    "notes": "Static gift code redeemed once against your NYT login. Not a rolling window, so there is nothing to renew. Enable only if you want the current redemption link surfaced."
+    "mode": "nyt_redeem",
+    "enabled": true,
+    "access_hours": 24,
+    "renew_every_hours": 0,
+    "entitlement": "AAA",
+    "notes": "Rolling 24-hour pass from a bulk certificate. renew_every_hours is 0 because the check is driven by real entitlement state rather than a timer: every tick asks NYT whether the pass is still live and only redeems when it is not. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
   },
+
   {
     "id": "wall_street_journal",
     "name": "The Wall Street Journal",
     "db_id": "3969",
     "mode": "link_only",
     "enabled": false,
-    "notes": "Static partner redemption link; requires an interactive WSJ login to redeem."
+    "access_hours": 72,
+    "notes": "Also a treadmill: 3-day access, then 'return to this page and log in as an existing user with the same username and password'. That is the Boston Globe pattern, so it is probably ez_register-able, but partner.wsj.com is a JS app and has not been investigated yet."
   },
   {
     "id": "washington_post",
@@ -40,6 +45,7 @@
     "db_id": "3970",
     "mode": "link_only",
     "enabled": false,
-    "notes": "Static special-offer sign-in link; requires an interactive Post login to redeem."
+    "access_hours": 168,
+    "notes": "Also a treadmill: 7-day access, then 'revisit this page and restart the process'. Not yet investigated."
   }
 ]

@@ -53,7 +53,10 @@ def record(provider_id: str, result: dict) -> dict:
         entry["message"] = result.get("message")
         if result.get("ok"):
             entry["last_success"] = result.get("renewed_at") or entry["last_attempt"]
-            entry["expires_at"] = result.get("expires_at")
+            # A provider that only confirmed an existing pass has no new expiry
+            # to report; keep the one we already know about.
+            if not result.get("keep_expires"):
+                entry["expires_at"] = result.get("expires_at")
             entry["url"] = result.get("url")
             entry["consecutive_failures"] = 0
         else:
