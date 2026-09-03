@@ -5,7 +5,10 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY config.py connector.py providers.py state.py mqtt_publisher.py notify.py app.py cli.py /app/
+# Copy by glob rather than enumerating modules: an explicit list silently
+# drops any new module and only fails at runtime, which is how nyt.py was
+# missed once already.
+COPY *.py /app/
 COPY providers.json /app/providers.json
 
 VOLUME ["/data"]
