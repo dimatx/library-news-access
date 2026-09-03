@@ -20,7 +20,7 @@
 
   {
     "id": "new_york_times",
-    "name": "The New York Times",
+    "name": "New York Times",
     "db_id": "20528",
     "mode": "nyt_redeem",
     "enabled": true,
