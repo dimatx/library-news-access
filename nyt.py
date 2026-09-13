@@ -65,10 +65,10 @@ mutation redeemAccessCode($accessCode: String!, $campaignId: String!) {
 # the expected steady state, not a failure.
 ALREADY_REDEEMED = "access_code_already_redeemed"
 
-# Returned once the account has consumed the certificate and the pass has
-# lapsed. The GraphQL API answers with the generic code while the web UI shows
-# "This code has already been redeemed", so both are treated as terminal for
-# this code.
+# A generic refusal. NYT returns this instead of a specific reason, and the web
+# UI shows its catch-all error for it. It is NOT proof the code is used up: a
+# browser redemption on the same account and code succeeded while the API was
+# still answering with this.
 REDEMPTION_ERROR = "access_code_redemption_error"
 
 
@@ -76,13 +76,14 @@ class SessionExpired(Exception):
     """The stored cookies are no longer a logged-in NYT session."""
 
 
-class CodeSpent(Exception):
-    """This NYT account has already redeemed this access code.
+class RedemptionRefused(Exception):
+    """NYT declined to redeem the code, without saying why.
 
-    The library issues a single bulk certificate and NYT allows one redemption
-    of it per account, so this is terminal for the code -- only a code the
-    library has not handed out before can succeed. It is a waiting state, not
-    an error to retry.
+    Distinct from ``SessionExpired`` because the session is fine and the
+    request was understood: NYT simply refused. Observed for ten days straight
+    while a manual redemption in a browser, using the same account and the same
+    code, succeeded. The cause is not yet known, so this is a retryable failure
+    rather than a terminal one.
     """
 
 
@@ -247,9 +248,11 @@ def redeem(session: requests.Session, access_code: str, campaign_id: str) -> dic
         if any(ALREADY_REDEEMED in m for m in messages):
             return {"already_active": True}
         if any(REDEMPTION_ERROR in m for m in messages):
-            raise CodeSpent(
-                "NYT refused the code with access_code_redemption_error; the web "
-                "UI reports it as already redeemed on this account"
+            raise RedemptionRefused(
+                "NYT refused the code (access_code_redemption_error). The session "
+                "is valid and the request was understood, so this is NYT declining "
+                "rather than anything wrong on our side. Redeeming by hand in a "
+                "browser has been seen to work while this was happening."
             )
         raise SessionExpired("; ".join(messages))
 

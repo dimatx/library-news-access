@@ -56,10 +56,6 @@ class Provider:
     # --- nyt_redeem ---
     cookie_file: str = ""
     entitlement: str = ""
-    # How long to wait before re-checking once the library's code is known to
-    # be spent. Only a newly issued code can change the outcome, so this is
-    # deliberately slow.
-    spent_code_retry_hours: int = 12
 
     @property
     def needs_account(self) -> bool:
@@ -285,44 +281,12 @@ def _run_nyt_redeem(
             "code": access_code,
         }
 
-    # The library hands out one bulk certificate, and NYT lets a given account
-    # redeem a given certificate exactly once. Once we have seen a code refused
-    # there is no point asking again with the same code -- only a code the
-    # library has not issued before can succeed.
-    if access_code in (entry.get("spent_codes") or []):
-        return {
-            "ok": True,
-            "status": "waiting",
-            "message": (
-                "Pass lapsed; the library's access code is already redeemed on "
-                "this NYT account. Waiting for the library to issue a new code."
-            ),
-            "url": location,
-            "renewed_at": None,
-            "expires_at": None,
-            "code": access_code,
-            "retry_after_hours": provider.spent_code_retry_hours,
-        }
-
+    # The library hands out a single static code, so there is no "fresher" code
+    # to fetch. If NYT refuses it we surface that as a failure and let the
+    # backoff slow us down, rather than guessing at a reason.
     try:
         result = nyt.redeem(session, access_code, campaign_id)
-    except nyt.CodeSpent as exc:
-        _LOGGER.info("%s: %s", provider.name, exc)
-        return {
-            "ok": True,
-            "status": "waiting",
-            "message": (
-                "The library's access code is already redeemed on this NYT "
-                "account. Waiting for the library to issue a new code."
-            ),
-            "url": location,
-            "renewed_at": None,
-            "expires_at": None,
-            "code": access_code,
-            "spend_code": True,
-            "retry_after_hours": provider.spent_code_retry_hours,
-        }
-    except nyt.SessionExpired as exc:
+    except (nyt.RedemptionRefused, nyt.SessionExpired) as exc:
         raise ConnectorError(str(exc)) from exc
 
     if result.get("already_active"):

@@ -97,7 +97,6 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
         "last_attempt": entry.get("last_attempt"),
         "last_success": entry.get("last_success"),
         "consecutive_failures": entry.get("consecutive_failures", 0),
-        "next_attempt_after": entry.get("next_attempt_after"),
         "url": entry.get("url"),
         "notes": provider.notes,
     }

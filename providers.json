@@ -27,7 +27,7 @@
     "access_hours": 24,
     "renew_every_hours": 0,
     "entitlement": "AAA",
-    "notes": "24-hour pass from a bulk certificate. IMPORTANT: the library issues one static code and NYT allows each account to redeem a given code only once, so after the first redemption this sits in a 'waiting' state until the library issues a new code. Renewal is driven by real entitlement state rather than a timer. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
+    "notes": "24-hour pass from a bulk certificate. Reading entitlement state works; the redemption call itself has not yet been observed to succeed from here (NYT answers access_code_redemption_error while a manual browser redemption on the same account and code works). See FINDINGS.md. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
   },
 
   {

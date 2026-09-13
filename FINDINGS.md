@@ -41,23 +41,20 @@ path; it re-ups the entitlement and does not reset the password.
 
 ## New York Times
 
-Harder than the Globe, and — as of 2026-09-12 — **effectively one-shot per
-account**. Still pure HTTP; no browser is required.
+Pure HTTP; no browser is required to *read* state. The redemption call,
+however, has an unresolved problem — see the open issue at the end.
 
-> **The catch.** The library issues a *single static* bulk-certificate code
-> (`gift_code` has been byte-identical across fresh sessions for at least 11
-> days), and NYT permits a given account to redeem a given code **once**. After
-> the first redemption the web UI answers *"This code has already been
-> redeemed"* and the GraphQL API answers `access_code_redemption_error`.
-> The library's page still says to "simply revisit this page and restart the
-> process", which does not hold for a single account against a static code.
->
-> The service therefore treats a spent code as a **waiting** state, not a
-> failure: it records the code, stops asking, and redeems automatically if the
-> library ever issues a different one.
+> **Correction (2026-09-13).** A previous version of this file claimed the
+> library's code was one-redemption-per-account and therefore spent. **That was
+> wrong.** A manual browser redemption on the same account and the same code
+> succeeded on 2026-09-13 00:13:54Z, ten days after the first one. The evidence
+> for the wrong claim was a browser showing "This code has already been
+> redeemed" — which was simply the response to clicking Redeem a second time,
+> moments after the first click had already worked.
 
 1. `POST https://mhl.org/connect/20528` -> `302` to
    `https://nytimes.com/subscription/redeem/all-access?campaignId=8F978&gift_code=<code>`.
+   The code is static: byte-identical across fresh sessions and across weeks.
 2. The "Redeem" button is not a form post (`POST` to that page returns `405`).
    It navigates to `/activate-access/access-code?access_code=...`, which is a
    client-side route that calls Apollo against
@@ -75,7 +72,9 @@ account**. Still pure HTTP; no browser is required.
 
    Required headers come from `window.__preloadedData.config.gqlRequestHeaders`
    on the redeem page: `nyt-app-type: project-vi`, `nyt-app-version`, and a
-   static `nyt-token`.
+   static `nyt-token`. The browser additionally sends `x-pageview-id` (from
+   client-side tracking, empty when unavailable) and `x-plid`; both look like
+   telemetry.
 4. `https://a.nytimes.com/svc/nyt/data-layer` reports live entitlement state.
    The library's subscription is identifiable by `campaignId` and by
    `subscriptionLabels` containing `BULK_CERT_REDEMPTION`, and carries a real
@@ -94,6 +93,33 @@ not challenged: it returns `200` from both.
 Redeeming while a pass is already live returns
 `{"errors":[{"message":"access_code_already_redeemed"}]}` with HTTP `200`,
 which is treated as "still active", not a failure.
+
+### Open issue: the redemption call has never succeeded
+
+Between 2026-09-04 08:10Z and 2026-09-13 00:13Z the service attempted
+redemption 413 times and every one returned `access_code_redemption_error`.
+In the same window a manual browser redemption worked first try.
+
+Ruled out by measurement:
+
+* **Datacenter IP** — reproduced identically from a residential IP.
+* **Dead session** — the data layer reports `isLoggedIn: true` throughout.
+* **Stale bot cookies** — walking the redeem and activate pages first (which is
+  what a browser does) did not change the outcome, and the `datadome` cookie
+  was neither rejected nor reissued.
+* **API drift** — the front-end chunk hash is unchanged, and NYT answers with
+  its own domain errors, so the request is understood.
+
+Two hypotheses remain, and they are not yet distinguishable:
+
+1. The request is missing something the browser sends.
+2. There was a temporary block or cooldown that happened to lapse right when
+   the manual redemption was tried.
+
+The manual redemption landed about one minute before the next scheduled tick,
+so the automation never got a clean attempt afterwards. The decisive test is
+the next natural expiry: if the automated attempt succeeds then, hypothesis 2
+holds and the request was always fine.
 
 ## How the earlier conclusion went wrong
 
