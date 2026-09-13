@@ -41,12 +41,23 @@ path; it re-ups the entitlement and does not reset the password.
 
 ## New York Times
 
-Harder than the Globe, but still pure HTTP. No browser is required.
+Harder than the Globe, and — as of 2026-09-12 — **effectively one-shot per
+account**. Still pure HTTP; no browser is required.
+
+> **The catch.** The library issues a *single static* bulk-certificate code
+> (`gift_code` has been byte-identical across fresh sessions for at least 11
+> days), and NYT permits a given account to redeem a given code **once**. After
+> the first redemption the web UI answers *"This code has already been
+> redeemed"* and the GraphQL API answers `access_code_redemption_error`.
+> The library's page still says to "simply revisit this page and restart the
+> process", which does not hold for a single account against a static code.
+>
+> The service therefore treats a spent code as a **waiting** state, not a
+> failure: it records the code, stops asking, and redeems automatically if the
+> library ever issues a different one.
 
 1. `POST https://mhl.org/connect/20528` -> `302` to
    `https://nytimes.com/subscription/redeem/all-access?campaignId=8F978&gift_code=<code>`.
-   The code is **static** (library-wide) and does not rotate. That is not
-   evidence it is single-use; it mints a per-account 24-hour pass.
 2. The "Redeem" button is not a form post (`POST` to that page returns `405`).
    It navigates to `/activate-access/access-code?access_code=...`, which is a
    client-side route that calls Apollo against
@@ -69,6 +80,10 @@ Harder than the Globe, but still pure HTTP. No browser is required.
    The library's subscription is identifiable by `campaignId` and by
    `subscriptionLabels` containing `BULK_CERT_REDEMPTION`, and carries a real
    `endDate` in ISO 8601 UTC. This is what drives renewal, rather than a timer.
+
+   **`isLoggedIn` lives under `session`, not `user`.** And NYT keeps
+   `hasActiveEntitlements` set for hours after a pass has really lapsed, still
+   carrying the stale `endDate`, so the end date is authoritative.
 
 **Login is never scripted.** `myaccount.nytimes.com/auth/login` returns `403`
 with `Server: DataDome` and a risk score around 0.95 for any non-browser

@@ -56,6 +56,10 @@ class Provider:
     # --- nyt_redeem ---
     cookie_file: str = ""
     entitlement: str = ""
+    # How long to wait before re-checking once the library's code is known to
+    # be spent. Only a newly issued code can change the outcome, so this is
+    # deliberately slow.
+    spent_code_retry_hours: int = 12
 
     @property
     def needs_account(self) -> bool:
@@ -224,10 +228,13 @@ def _run_link_only(provider: Provider, session: requests.Session, card: str) -> 
     }
 
 
-def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) -> dict:
+def _run_nyt_redeem(
+    provider: Provider, session: requests.Session, card: str, entry: dict | None = None
+) -> dict:
     """Redeem the library's NYT access code against a stored browser session."""
     import nyt
 
+    entry = entry or {}
     cookie_file = provider.cookie_file or config.NYT_COOKIE_FILE
     try:
         nyt.load_cookies(session, cookie_file)
@@ -269,15 +276,52 @@ def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) ->
         # Nothing to do. Redeeming now would only return 'already redeemed'.
         return {
             "ok": True,
+            "status": "ok",
             "message": f"Pass active until {state.get('expires_at') or 'unknown'}",
             "url": location,
             "renewed_at": now.isoformat(timespec="seconds"),
             "expires_at": state.get("expires_at"),
             "keep_expires": state.get("expires_at") is None,
+            "code": access_code,
+        }
+
+    # The library hands out one bulk certificate, and NYT lets a given account
+    # redeem a given certificate exactly once. Once we have seen a code refused
+    # there is no point asking again with the same code -- only a code the
+    # library has not issued before can succeed.
+    if access_code in (entry.get("spent_codes") or []):
+        return {
+            "ok": True,
+            "status": "waiting",
+            "message": (
+                "Pass lapsed; the library's access code is already redeemed on "
+                "this NYT account. Waiting for the library to issue a new code."
+            ),
+            "url": location,
+            "renewed_at": None,
+            "expires_at": None,
+            "code": access_code,
+            "retry_after_hours": provider.spent_code_retry_hours,
         }
 
     try:
         result = nyt.redeem(session, access_code, campaign_id)
+    except nyt.CodeSpent as exc:
+        _LOGGER.info("%s: %s", provider.name, exc)
+        return {
+            "ok": True,
+            "status": "waiting",
+            "message": (
+                "The library's access code is already redeemed on this NYT "
+                "account. Waiting for the library to issue a new code."
+            ),
+            "url": location,
+            "renewed_at": None,
+            "expires_at": None,
+            "code": access_code,
+            "spend_code": True,
+            "retry_after_hours": provider.spent_code_retry_hours,
+        }
     except nyt.SessionExpired as exc:
         raise ConnectorError(str(exc)) from exc
 
@@ -290,11 +334,13 @@ def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) ->
             state = {}
         return {
             "ok": True,
+            "status": "ok",
             "message": "Code already redeemed; pass still active",
             "url": location,
             "renewed_at": now.isoformat(timespec="seconds"),
             "expires_at": state.get("expires_at"),
             "keep_expires": state.get("expires_at") is None,
+            "code": access_code,
         }
 
     expires_at = result.get("expires_at")
@@ -306,11 +352,13 @@ def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) ->
 
     return {
         "ok": True,
+        "status": "ok",
         "message": f"Redeemed {result.get('subscription_name') or 'access'}"
                    + (f" for {days} day(s)" if days else ""),
         "url": location,
         "renewed_at": now.isoformat(timespec="seconds"),
         "expires_at": expires_at,
+        "code": access_code,
     }
 
 
@@ -321,8 +369,12 @@ _RUNNERS = {
 }
 
 
-def run(provider: Provider, card: str | None = None) -> dict:
-    """Run one provider. Never raises; failures come back as ``ok: False``."""
+def run(provider: Provider, card: str | None = None, entry: dict | None = None) -> dict:
+    """Run one provider. Never raises; failures come back as ``ok: False``.
+
+    ``entry`` is the provider's stored state, so a runner can avoid repeating
+    work it already knows is pointless.
+    """
     card = card or config.CARD_NUMBER
     base = {"id": provider.id, "name": provider.name, "mode": provider.mode}
 
@@ -336,7 +388,10 @@ def run(provider: Provider, card: str | None = None) -> dict:
     try:
         if not card:
             raise ConnectorError("no library card number configured")
-        outcome = runner(provider, session, card)
+        if provider.mode == "nyt_redeem":
+            outcome = runner(provider, session, card, entry)
+        else:
+            outcome = runner(provider, session, card)
         _LOGGER.info("%s: %s", provider.name, outcome["message"])
         return {**base, **outcome}
     except ConnectorError as exc:

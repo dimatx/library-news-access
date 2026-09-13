@@ -27,7 +27,7 @@
     "access_hours": 24,
     "renew_every_hours": 0,
     "entitlement": "AAA",
-    "notes": "Rolling 24-hour pass from a bulk certificate. renew_every_hours is 0 because the check is driven by real entitlement state rather than a timer: every tick asks NYT whether the pass is still live and only redeems when it is not. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
+    "notes": "24-hour pass from a bulk certificate. IMPORTANT: the library issues one static code and NYT allows each account to redeem a given code only once, so after the first redemption this sits in a 'waiting' state until the library issues a new code. Renewal is driven by real entitlement state rather than a timer. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
   },
 
   {

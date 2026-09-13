@@ -85,7 +85,7 @@ def run_cycle(force: bool = False) -> dict:
                 })
                 continue
 
-            result = providers_mod.run(provider)
+            result = providers_mod.run(provider, entry=entry)
             state.record(provider.id, result)
             result["skipped"] = False
             results.append(result)

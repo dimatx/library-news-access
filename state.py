@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import config
 
@@ -51,8 +51,31 @@ def record(provider_id: str, result: dict) -> dict:
         entry["last_attempt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         entry["ok"] = result.get("ok", False)
         entry["message"] = result.get("message")
+        entry["status"] = result.get(
+            "status", "ok" if result.get("ok") else "failed"
+        )
+
+        # Remember a code the publisher has refused for good, so we never
+        # spend another request on it.
+        if result.get("spend_code") and result.get("code"):
+            spent = list(entry.get("spent_codes") or [])
+            if result["code"] not in spent:
+                spent.append(result["code"])
+            entry["spent_codes"] = spent[-10:]
+
+        # A runner can ask to be left alone for a while (for example while
+        # waiting for the library to issue a new code).
+        retry_after = result.get("retry_after_hours")
+        if retry_after:
+            entry["next_attempt_after"] = (
+                datetime.now(timezone.utc) + timedelta(hours=retry_after)
+            ).isoformat(timespec="seconds")
+        else:
+            entry.pop("next_attempt_after", None)
+
         if result.get("ok"):
-            entry["last_success"] = result.get("renewed_at") or entry["last_attempt"]
+            if result.get("renewed_at"):
+                entry["last_success"] = result["renewed_at"]
             # A provider that only confirmed an existing pass has no new expiry
             # to report; keep the one we already know about.
             if not result.get("keep_expires"):
@@ -105,6 +128,12 @@ def is_due(provider, entry: dict | None) -> bool:
         return True
 
     now = datetime.now(timezone.utc)
+
+    # A runner can park itself until a given time (for example while waiting
+    # for the library to issue a new access code).
+    parked = parse_ts(entry.get("next_attempt_after"))
+    if parked is not None and parked > now:
+        return False
 
     if not entry.get("ok"):
         last_attempt = parse_ts(entry.get("last_attempt"))

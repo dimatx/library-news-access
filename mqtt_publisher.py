@@ -97,9 +97,15 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
         "last_attempt": entry.get("last_attempt"),
         "last_success": entry.get("last_success"),
         "consecutive_failures": entry.get("consecutive_failures", 0),
+        "next_attempt_after": entry.get("next_attempt_after"),
         "url": entry.get("url"),
         "notes": provider.notes,
     }
+
+    # ok | waiting | failed. 'waiting' means there is nothing wrong with us:
+    # the publisher simply has nothing left to give until something changes on
+    # their side, so it should not read as a fault.
+    status = entry.get("status") or ("ok" if entry.get("ok") else "failed")
 
     status_id = f"lna_{provider.id}_status"
     out.append((
@@ -114,7 +120,7 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
             "availability_topic": avail,
             "device": _device(provider),
         },
-        "ok" if entry.get("ok") else "failed",
+        status,
     ))
     out.append((
         "__attributes__",

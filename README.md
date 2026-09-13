@@ -17,13 +17,19 @@ codes:
 | Newspaper | Pass length | Automated? |
 |---|---|---|
 | **Boston Globe** | 72 hours | **Yes** — resubmits the registration form |
-| **New York Times** | 24 hours | **Yes** — redeems the bulk certificate |
+| **New York Times** | 24 hours | **Once** — the library's code is one-per-account (see below) |
 | Wall Street Journal | 3 days | Not yet built |
 | Washington Post | 7 days | Not yet built |
 | Eagle Tribune (NewsBank) | none | **No** — no account, just a throwaway session |
 
 Eagle Tribune is the only permanent exclusion: card entry mints a browsing
 session with no account behind it, so there is nothing to keep alive.
+
+> **New York Times caveat.** The library issues one static access code, and NYT
+> lets each account redeem a given code only once. So the first redemption
+> works and subsequent ones cannot. The provider reports `waiting` (not
+> `failed`), stops asking, and will redeem automatically if the library ever
+> issues a new code. The Boston Globe has no such limit.
 
 ## Quick start
 

@@ -57,7 +57,7 @@ def main() -> int:
             print(f"[skip] {provider.name}: not due yet (expires {expires})")
             continue
 
-        result = providers_mod.run(provider)
+        result = providers_mod.run(provider, entry=entry)
         state.record(provider.id, result)
 
         mark = "ok  " if result["ok"] else "FAIL"

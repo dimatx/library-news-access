@@ -65,9 +65,25 @@ mutation redeemAccessCode($accessCode: String!, $campaignId: String!) {
 # the expected steady state, not a failure.
 ALREADY_REDEEMED = "access_code_already_redeemed"
 
+# Returned once the account has consumed the certificate and the pass has
+# lapsed. The GraphQL API answers with the generic code while the web UI shows
+# "This code has already been redeemed", so both are treated as terminal for
+# this code.
+REDEMPTION_ERROR = "access_code_redemption_error"
+
 
 class SessionExpired(Exception):
     """The stored cookies are no longer a logged-in NYT session."""
+
+
+class CodeSpent(Exception):
+    """This NYT account has already redeemed this access code.
+
+    The library issues a single bulk certificate and NYT allows one redemption
+    of it per account, so this is terminal for the code -- only a code the
+    library has not handed out before can succeed. It is a waiting state, not
+    an error to retry.
+    """
 
 
 def load_cookies(session: requests.Session, path: str) -> None:
@@ -230,6 +246,11 @@ def redeem(session: requests.Session, access_code: str, campaign_id: str) -> dic
         messages = [str(e.get("message", e)) for e in errors]
         if any(ALREADY_REDEEMED in m for m in messages):
             return {"already_active": True}
+        if any(REDEMPTION_ERROR in m for m in messages):
+            raise CodeSpent(
+                "NYT refused the code with access_code_redemption_error; the web "
+                "UI reports it as already redeemed on this account"
+            )
         raise SessionExpired("; ".join(messages))
 
     result = ((body.get("data") or {}).get("redeemAccessCode")) or {}
