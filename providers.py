@@ -25,6 +25,7 @@ import requests
 from bs4 import BeautifulSoup
 
 import config
+import state as state_mod
 from connector import ConnectorError, post_card
 
 _LOGGER = logging.getLogger(__name__)
@@ -244,9 +245,25 @@ def _run_nyt_redeem(provider: Provider, session: requests.Session, card: str) ->
         raise ConnectorError(str(exc)) from exc
 
     wanted = provider.entitlement or "AAA"
-    already_entitled = state.get("has_active") and wanted in (state.get("entitlements") or [])
-
     now = datetime.now(timezone.utc)
+
+    # NYT's data layer keeps reporting hasActiveEntitlements for hours after
+    # the pass has actually lapsed, still carrying the old endDate. Trusting
+    # that flag alone left the pass expired and unrenewed for ~8 hours, so the
+    # end date wins whenever we have one.
+    expires = state_mod.parse_ts(state.get("expires_at"))
+    not_expired = expires is None or expires > now
+    if expires is not None and expires <= now and state.get("has_active"):
+        _LOGGER.info(
+            "%s: NYT still reports an active pass but it expired at %s; renewing",
+            provider.name, state.get("expires_at"),
+        )
+
+    already_entitled = (
+        state.get("has_active")
+        and wanted in (state.get("entitlements") or [])
+        and not_expired
+    )
 
     if already_entitled:
         # Nothing to do. Redeeming now would only return 'already redeemed'.

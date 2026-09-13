@@ -68,9 +68,20 @@ NYT whether the pass is still active and only redeems when it is not. The real
 expiry comes back from NYT, so the Home Assistant sensor shows their date
 rather than a guess.
 
+> NYT's data layer keeps reporting `hasActiveEntitlements` for several hours
+> after a pass has actually lapsed, still carrying the stale end date. The end
+> date is therefore treated as authoritative whenever it is present.
+
 The session cookie is long-lived (roughly a year) and every run refreshes it,
 but it will not last forever. When it dies the provider fails loudly rather
 than silently stopping, so re-export and re-copy the file.
+
+## When a provider keeps failing
+
+A provider whose last attempt failed waits out an increasing backoff before
+trying again: 5 min, 15 min, 1 h, 4 h, 12 h, then once a day. A publisher that
+is refusing us is asked once a day rather than on every tick, and a transient
+blip still recovers within minutes.
 
 ## Deployment
 

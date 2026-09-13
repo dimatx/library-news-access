@@ -76,17 +76,43 @@ def parse_ts(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+# Backoff between retries after consecutive failures, in minutes. A provider
+# that keeps failing settles at one attempt per day rather than hammering the
+# publisher on every tick. Without this a permanently failing provider issued
+# a request every CHECK_MINUTES forever.
+_FAILURE_BACKOFF_MINUTES = (5, 15, 60, 240, 720, 1440)
+
+
+def failure_backoff_seconds(failures: int) -> int:
+    if failures <= 0:
+        return 0
+    index = min(failures, len(_FAILURE_BACKOFF_MINUTES)) - 1
+    return _FAILURE_BACKOFF_MINUTES[index] * 60
+
+
 def is_due(provider, entry: dict | None) -> bool:
     """Whether a provider should run now.
 
     Renews on ``renew_every_hours`` since the last success, and always renews
     once access is inside ``RENEW_MARGIN_HOURS`` of lapsing. A provider that
-    has never succeeded is always due.
+    has never run is always due.
+
+    A provider whose last attempt *failed* waits out an increasing backoff
+    first, so a publisher that is refusing us is asked once a day rather than
+    on every tick.
     """
-    if not entry or not entry.get("ok"):
+    if not entry:
         return True
 
     now = datetime.now(timezone.utc)
+
+    if not entry.get("ok"):
+        last_attempt = parse_ts(entry.get("last_attempt"))
+        if last_attempt is None:
+            return True
+        wait = failure_backoff_seconds(int(entry.get("consecutive_failures", 0)))
+        return (now - last_attempt).total_seconds() >= wait
+
     last = parse_ts(entry.get("last_success"))
     if last is None:
         return True
