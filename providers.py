@@ -281,6 +281,37 @@ def _run_nyt_redeem(
             "code": access_code,
         }
 
+    # Ask NYT whether it would accept the code before spending an attempt on
+    # it. The redemption mutation only ever reports a generic error, whereas
+    # the eligibility query names the actual reason.
+    try:
+        elig = nyt.eligibility(session, access_code)
+    except nyt.SessionExpired as exc:
+        raise ConnectorError(str(exc)) from exc
+
+    reason = elig.get("reason")
+    if reason == nyt.ALREADY_SUBSCRIBER:
+        _LOGGER.info(
+            "%s: NYT still counts an active subscription (%s); not redeeming yet",
+            provider.name, reason,
+        )
+        return {
+            "ok": True,
+            "status": "waiting",
+            "message": (
+                "Pass lapsed, but NYT still counts the expired one as active "
+                "(USER_ALREADY_SUBSCRIBER). It clears on their side; will "
+                "redeem once it does."
+            ),
+            "url": location,
+            "renewed_at": None,
+            "expires_at": None,
+            "keep_expires": True,
+        }
+
+    if reason and reason != nyt.ELIGIBLE:
+        _LOGGER.info("%s: NYT reports ineligible: %s", provider.name, reason)
+
     # The library hands out a single static code, so there is no "fresher" code
     # to fetch. If NYT refuses it we surface that as a failure and let the
     # backoff slow us down, rather than guessing at a reason.

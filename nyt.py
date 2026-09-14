@@ -61,6 +61,31 @@ mutation redeemAccessCode($accessCode: String!, $campaignId: String!) {
 }
 """.strip()
 
+# NYT will say *why* it would refuse, which the redemption mutation itself will
+# not: it only ever answers with a generic error. Asking first turns a blind
+# retry into an informed decision.
+ELIGIBILITY_QUERY = """
+query getDigitalGiftUserProfileInfo($surfaceCode: String!, $digitalGiftCertificate: String!) {
+  userProfile(surfaceCode: $surfaceCode) {
+    emailAddress
+    digitalGiftEligibility(digitalGiftCertificate: $digitalGiftCertificate) {
+      reason
+      subscriptionName
+      subscriptionDurationDays
+      giftCertificateStatus
+    }
+  }
+}
+""".strip()
+
+# Eligibility reasons we understand.
+#   ELIGIBLE                -> redeem now
+#   USER_ALREADY_SUBSCRIBER -> NYT still counts an existing subscription. Seen
+#                              while a lapsed pass sits at status=ACTIVE with an
+#                              endDate in the past; it clears server-side later.
+ELIGIBLE = "ELIGIBLE"
+ALREADY_SUBSCRIBER = "USER_ALREADY_SUBSCRIBER"
+
 # NYT reports this when the account already holds an active redemption. It is
 # the expected steady state, not a failure.
 ALREADY_REDEEMED = "access_code_already_redeemed"
@@ -74,6 +99,19 @@ REDEMPTION_ERROR = "access_code_redemption_error"
 
 class SessionExpired(Exception):
     """The stored cookies are no longer a logged-in NYT session."""
+
+
+class NotYetEligible(Exception):
+    """NYT would refuse this redemption, and has said why.
+
+    Currently seen as USER_ALREADY_SUBSCRIBER while a lapsed pass is still
+    held at status=ACTIVE with an endDate in the past. It clears server-side
+    on NYT's own schedule, so this is a waiting state rather than a fault.
+    """
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 class RedemptionRefused(Exception):
@@ -203,17 +241,8 @@ def parse_redeem_url(url: str) -> tuple[str, str]:
     return code, campaign
 
 
-def redeem(session: requests.Session, access_code: str, campaign_id: str) -> dict:
-    """Run the redeemAccessCode mutation.
-
-    Returns ``{"already_active": True}`` when NYT reports the code is already
-    redeemed, which means the pass is still live.
-    """
-    payload = {
-        "operationName": "redeemAccessCode",
-        "variables": {"accessCode": access_code, "campaignId": campaign_id},
-        "query": REDEEM_MUTATION,
-    }
+def _graphql(session: requests.Session, name: str, query: str, variables: dict) -> dict:
+    """POST one GraphQL operation and return the parsed body."""
     headers = {
         "content-type": "application/json",
         "nyt-app-type": NYT_APP_TYPE,
@@ -222,25 +251,66 @@ def redeem(session: requests.Session, access_code: str, campaign_id: str) -> dic
         "Origin": "https://www.nytimes.com",
         "Referer": REDEEM_REFERER,
     }
-
+    payload = {"operationName": name, "variables": variables, "query": query}
     try:
         response = session.post(
             GRAPHQL_URL, json=payload, headers=headers, timeout=config.REQUEST_TIMEOUT
         )
     except requests.RequestException as exc:
-        raise SessionExpired(f"NYT redemption request failed: {exc}") from exc
+        raise SessionExpired(f"NYT request failed: {exc}") from exc
 
     if response.status_code == 403:
         raise SessionExpired(
-            "NYT rejected the redemption with 403 (bot protection or dead session)"
+            "NYT rejected the request with 403 (bot protection or dead session)"
         )
-
     try:
-        body = response.json()
+        return response.json()
     except ValueError as exc:
         raise SessionExpired(
-            f"NYT returned a non-JSON redemption response ({response.status_code})"
+            f"NYT returned a non-JSON response ({response.status_code})"
         ) from exc
+
+
+def eligibility(session: requests.Session, access_code: str) -> dict:
+    """Ask NYT whether this account could redeem this code right now.
+
+    Returns ``{"reason": str, "certificate_status": str}``. ``reason`` is
+    ``ELIGIBLE`` when redemption should work; anything else explains the
+    refusal that ``redeem`` would otherwise report only as a generic error.
+    """
+    body = _graphql(
+        session,
+        "getDigitalGiftUserProfileInfo",
+        ELIGIBILITY_QUERY,
+        {"surfaceCode": "access-code", "digitalGiftCertificate": access_code},
+    )
+    errors = body.get("errors") or []
+    if errors:
+        # Not fatal: fall through and let the redemption attempt decide.
+        _LOGGER.debug("NYT eligibility query returned errors: %s", errors)
+        return {"reason": "", "certificate_status": ""}
+
+    profile = (body.get("data") or {}).get("userProfile") or {}
+    gift = profile.get("digitalGiftEligibility") or {}
+    return {
+        "reason": gift.get("reason") or "",
+        "certificate_status": gift.get("giftCertificateStatus") or "",
+        "email": profile.get("emailAddress") or "",
+    }
+
+
+def redeem(session: requests.Session, access_code: str, campaign_id: str) -> dict:
+    """Run the redeemAccessCode mutation.
+
+    Returns ``{"already_active": True}`` when NYT reports the code is already
+    redeemed, which means the pass is still live.
+    """
+    body = _graphql(
+        session,
+        "redeemAccessCode",
+        REDEEM_MUTATION,
+        {"accessCode": access_code, "campaignId": campaign_id},
+    )
 
     errors = body.get("errors") or []
     if errors:
