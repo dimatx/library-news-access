@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger("library-news-access")
 
 app = Flask(__name__)
 
-VERSION = "2026-09-01"
+VERSION = "2026-09-14"
 
 STATE = {
     "last_cycle": None,
@@ -227,6 +227,18 @@ def index():
 
 @app.route("/health")
 def health():
+    """Liveness for an orchestrator, not a report card on the publishers.
+
+    A single failed poll is normal: the library or a newspaper can blip, and
+    the retry backoff already handles it. Reporting unhealthy for that pages
+    someone for a third-party hiccup that needs no action, and invites a
+    restart that cannot possibly fix it.
+
+    So this is unhealthy only when something genuinely needs attention:
+    missing configuration, a pass that has actually lapsed, or a provider that
+    has failed enough times in a row to look like a real fault rather than a
+    blip. Transient failures are still reported, under `warnings`.
+    """
     selected = _providers()
     stored = state.load()
     missing = config.missing_required(
@@ -235,23 +247,37 @@ def health():
 
     now = datetime.now(timezone.utc)
     problems = []
+    warnings = []
     for provider in selected:
         entry = stored.get(provider.id) or {}
         if not entry:
-            problems.append(f"{provider.name}: never run")
+            # Nothing tried yet. The startup cycle will see to it.
+            warnings.append(f"{provider.name}: not run yet")
             continue
-        if not entry.get("ok"):
-            problems.append(f"{provider.name}: {entry.get('message')}")
-            continue
+
+        failures = int(entry.get("consecutive_failures", 0))
         expires = state.parse_ts(entry.get("expires_at"))
-        if expires and expires <= now:
+        lapsed = expires is not None and expires <= now
+
+        if lapsed:
             problems.append(f"{provider.name}: access lapsed at {entry['expires_at']}")
+        elif failures >= config.HEALTH_FAILURE_THRESHOLD:
+            problems.append(
+                f"{provider.name}: {failures} consecutive failures "
+                f"({entry.get('message')})"
+            )
+        elif not entry.get("ok"):
+            warnings.append(
+                f"{provider.name}: last attempt failed, retrying "
+                f"({entry.get('message')})"
+            )
 
     healthy = not problems and not missing
     with _lock:
         body = {
             "healthy": healthy,
             "problems": problems,
+            "warnings": warnings,
             "missing_config": missing,
             "last_cycle": STATE["last_cycle"],
             "last_success": STATE["last_success"],

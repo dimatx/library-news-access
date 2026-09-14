@@ -57,6 +57,12 @@ RENEW_MARGIN_HOURS = _int("LNA_RENEW_MARGIN_HOURS", 24)
 RUN_ON_START = _bool("LNA_RUN_ON_START", True)
 
 REQUEST_TIMEOUT = _int("LNA_REQUEST_TIMEOUT", 45)
+
+# Consecutive failures before /health reports unhealthy. One failed poll is a
+# blip -- the library answered with a Cloudflare 522 once and the next tick was
+# fine -- and reporting that as unhealthy pages someone for a third-party
+# hiccup that needs no action. Three in a row spans an hour of backoff.
+HEALTH_FAILURE_THRESHOLD = max(1, _int("LNA_HEALTH_FAILURE_THRESHOLD", 3))
 USER_AGENT = _clean(
     os.environ.get(
         "LNA_USER_AGENT",

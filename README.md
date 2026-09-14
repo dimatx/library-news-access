@@ -136,6 +136,7 @@ Different credentials per newspaper? Prefix with the provider id, e.g.
 | `LNA_DATA_DIR` | `/data` | Where renewal state is stored |
 | `LNA_LOG_LEVEL` | `INFO` | |
 | `LNA_PORT` | `8781` | |
+| `LNA_HEALTH_FAILURE_THRESHOLD` | `3` | Consecutive failures before `/health` reports unhealthy |
 | `LNA_REQUEST_TIMEOUT` | `45` | Per-request timeout, seconds |
 | `LNA_USER_AGENT` | Chrome | Sent to the library and publishers |
 | `MQTT_CLIENT_ID` | `library-news-access` | Change if it clashes on your broker |
@@ -164,6 +165,13 @@ at an expired library card or a dead NYT session — both need you, not a retry.
 | `GET /` | Status page |
 | `GET /health` | `200` when healthy, `503` with a `problems` list otherwise |
 | `POST /run` | Force an immediate check |
+
+`/health` is deliberately tolerant of blips. A single failed poll — the library
+being briefly unreachable, say — is reported under `warnings` while still
+returning `200`, because the retry backoff already handles it and restarting
+the container would not help. It returns `503` only when something actually
+needs you: configuration is missing, a pass has genuinely lapsed, or a provider
+has failed `LNA_HEALTH_FAILURE_THRESHOLD` times in a row (default 3).
 
 ## How it works
 
