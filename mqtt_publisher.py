@@ -101,9 +101,8 @@ def _entities(provider, entry: dict) -> list[tuple[str, str, dict, str]]:
         "notes": provider.notes,
     }
 
-    # ok | waiting | failed. 'waiting' means there is nothing wrong with us:
-    # the publisher simply has nothing left to give until something changes on
-    # their side, so it should not read as a fault.
+    # Published status. 'ok' or 'failed' today; the field exists so a provider
+    # can report a third state without changing the discovery payload.
     status = entry.get("status") or ("ok" if entry.get("ok") else "failed")
 
     status_id = f"lna_{provider.id}_status"

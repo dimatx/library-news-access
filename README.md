@@ -1,168 +1,201 @@
 # Library News Access
 
-Keeps the **Boston Globe** pass that Memorial Hall Library grants you from
-lapsing, without you having to re-type a library card every three days.
+Your library gives you free newspaper access, but the pass expires every day or
+three and you have to re-enter your card number to get it back. This renews it
+for you.
 
-The library's Globe pass lasts **72 hours**. The connector page says so
-outright: *"At the end of your free temporary access period, simply complete
-this form again."* That is the entire problem this solves — it completes the
-form again, on a timer, and tells Home Assistant how long you have left.
+It runs as a small container, checks each newspaper on a schedule, and re-ups
+the pass before it lapses. Optionally it reports status and expiry to Home
+Assistant.
 
-## What it does and does not automate
+Built against **Memorial Hall Library** (Andover, MA), whose "Connect to…"
+portal is a widely used library product — so it may work for your library with
+only a URL change. See [Other libraries](#other-libraries).
 
-Every newspaper MHL offers was measured by replaying the flow (see
-[FINDINGS.md](FINDINGS.md)). **All of them are rolling passes**, not one-shot
-codes:
+## Newspapers
 
-| Newspaper | Pass length | Automated? |
+| Newspaper | Pass length | Status |
 |---|---|---|
-| **Boston Globe** | 72 hours | **Yes** — resubmits the registration form |
-| **New York Times** | 24 hours | **Yes** — `CheckAccessCode` then `redeemAccessCode` |
-| Wall Street Journal | 3 days | Not yet built |
-| Washington Post | 7 days | Not yet built |
-| Eagle Tribune (NewsBank) | none | **No** — no account, just a throwaway session |
+| **Boston Globe** | 72 hours | Automated |
+| **New York Times** | 24 hours | Automated (needs a one-time session export) |
+| Wall Street Journal | 3 days | Not built yet |
+| Washington Post | 7 days | Not built yet |
+| Eagle Tribune (NewsBank) | — | Not applicable |
 
-Eagle Tribune is the only permanent exclusion: card entry mints a browsing
-session with no account behind it, so there is nothing to keep alive.
+Each of these was checked by replaying the flow by hand; details are in
+[FINDINGS.md](FINDINGS.md).
+
+Eagle Tribune is excluded on purpose: entering your card mints a throwaway
+browsing session with no account behind it, so there is no pass to keep alive.
+
+## What you need
+
+- A library card for a library using the `/connect/<id>` portal
+- An account with each newspaper (free to create; the library pass attaches to
+  it). For the Globe, this is the account you already sign in with
+- Docker
 
 ## Quick start
 
 ```bash
-cp .env.example .env
-# fill in LNA_CARD_NUMBER and your existing Globe login
+git clone https://github.com/dimatx/library-news-access
+cd library-news-access
+cp .env.example .env      # fill in your card number and newspaper login
 docker compose up -d --build
 ```
 
-Then open <http://localhost:8781>.
+Open <http://localhost:8781> for a status page showing each paper and when its
+pass expires.
 
-Run it once by hand without waiting for the scheduler:
+To run a check immediately instead of waiting for the scheduler:
 
 ```bash
-docker compose run --rm library-news-access python cli.py --force
-docker compose run --rm library-news-access python cli.py --list
+curl -X POST http://localhost:8781/run
 ```
 
-> The Globe's form says **"Create Account"** even though you already have one.
-> Submitting it with your existing email and password is the intended way to
-> re-up access — that is exactly what the manual process does.
+Both the Boston Globe and the New York Times are enabled by default. NYT will
+report a failure until you complete the session export below; if you would
+rather not use it at all, set `enabled: false` for it in `providers.json` or
+set `LNA_ONLY_PROVIDERS=boston_globe`.
+
+> The Globe's form is labelled **"Create Account"** even when you already have
+> one. Submitting it with your existing email and password is how the library
+> intends you to re-up access — it does not create a duplicate or reset your
+> password. It is exactly what you would be doing by hand.
 
 ## New York Times setup
 
-NYT needs one extra thing: a browser session. Its login page is behind
-DataDome, so this service **never attempts to log in**. You capture a session
-once, and it reuses it.
+NYT needs one thing from you up front. Its login page is behind bot protection,
+so this service **never tries to log in**. Instead you capture a browser
+session once and it reuses it.
 
-1. Open an **incognito window** and log in at nytimes.com
-2. Export cookies with an extension such as "Get cookies.txt LOCALLY",
-   scoped to `nytimes.com`
-3. **Close the window without signing out** (signing out kills the session you
-   just captured)
-4. Drop the file in the data volume as `nyt_cookies.txt`:
+1. Sign in at [nytimes.com](https://www.nytimes.com) in your browser
+2. Export cookies for `nytimes.com` using an extension such as
+   *Get cookies.txt LOCALLY* (Netscape format)
+3. Copy the file into the container's data volume:
 
 ```bash
 docker cp nytimes.com_cookies.txt library-news-access:/data/nyt_cookies.txt
 ```
 
-Renewal is driven by **live entitlement state**, not a timer: each tick asks
-NYT whether the pass is still active and only redeems when it is not. The real
-expiry comes back from NYT, so the Home Assistant sensor shows their date
-rather than a guess.
+The session lasts roughly a year. When it expires the provider fails loudly
+rather than going quiet, so you will see it on the status page and in Home
+Assistant — re-export and copy it in again.
 
-> NYT's data layer keeps reporting `hasActiveEntitlements` for several hours
-> after a pass has actually lapsed, still carrying the stale end date. The end
-> date is therefore treated as authoritative whenever it is present.
-
-The session cookie is long-lived (roughly a year) and every run refreshes it,
-but it will not last forever. When it dies the provider fails loudly rather
-than silently stopping, so re-export and re-copy the file.
-
-## When a provider keeps failing
-
-A provider whose last attempt failed waits out an increasing backoff before
-trying again: 5 min, 15 min, 1 h, 4 h, 12 h, then once a day. A publisher that
-is refusing us is asked once a day rather than on every tick, and a transient
-blip still recovers within minutes.
-
-## Deployment
-
-CI publishes a multi-arch image (`linux/amd64` + `linux/arm64`) on every push
-to `main`:
-
-```
-ghcr.io/dimatx/library-news-access:latest
-```
-
-To run the published image instead of building, swap `build: .` for
-`image: ghcr.io/dimatx/library-news-access:latest` in `compose.yaml` and supply
-the environment from your orchestrator (Komodo, Portainer, plain compose with
-an `.env` file — anything). `compose.yaml` in this repo builds locally, which is
-what you want for development.
-
-**No credentials belong in this repo.** The card number, name, email, and
-password are read from the environment at runtime only.
-
-## How renewal is scheduled
-
-The loop wakes every `LNA_CHECK_MINUTES` (default 30) and renews a provider if
-either is true:
-
-- `renew_every_hours` has elapsed since the last success (Globe: 24h), or
-- access is within `LNA_RENEW_MARGIN_HOURS` of lapsing (default 24h).
-
-With a 72-hour window renewed every 24 hours, roughly **two full days of
-retries** are available before access could actually lapse. State lives in
-`/data/state.json`, so a restart does not trigger an unnecessary renewal.
+To keep the file elsewhere, point `LNA_NYT_COOKIE_FILE` at it.
 
 ## Configuration
 
+Everything is environment variables. See [`.env.example`](.env.example).
+
+### Required
+
+| Variable | Purpose |
+|---|---|
+| `LNA_CARD_NUMBER` | Library card number, digits only |
+| `LNA_FIRST_NAME`, `LNA_LAST_NAME` | Name on the newspaper account |
+| `LNA_EMAIL`, `LNA_PASSWORD` | Your existing newspaper login |
+
+Different credentials per newspaper? Prefix with the provider id, e.g.
+`LNA_BOSTON_GLOBE_EMAIL`, `LNA_NEW_YORK_TIMES_EMAIL`.
+
+### Scheduling
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `LNA_CARD_NUMBER` | — | **Required.** Library card number, no spaces. |
-| `LNA_CONNECT_BASE` | `https://mhl.org/connect` | Library connector base. Change for a different library. |
-| `LNA_FIRST_NAME` / `LNA_LAST_NAME` | — | Required for renewable providers. |
-| `LNA_EMAIL` / `LNA_PASSWORD` | — | Your existing newspaper account. |
-| `LNA_CHECK_MINUTES` | `30` | Scheduler tick. |
-| `LNA_RENEW_MARGIN_HOURS` | `24` | Renew this long before access lapses. |
-| `LNA_RUN_ON_START` | `true` | Run a pass at container start. |
-| `LNA_ONLY_PROVIDERS` | — | Comma-separated ids; overrides `enabled` in `providers.json`. |
-| `MQTT_HOST` | — | Broker address. Leave empty to disable Home Assistant publishing. |
-| `LNA_NTFY_URL` / `LNA_NTFY_TOPIC` | — | ntfy alert when a renewal fails. |
-| `LNA_KUMA_PUSH_URL` | — | Uptime Kuma push, pinged only when everything succeeded. |
+| `LNA_CHECK_MINUTES` | `30` | How often to check whether anything is due |
+| `LNA_RENEW_MARGIN_HOURS` | `24` | Renew this long before a pass lapses |
+| `LNA_RUN_ON_START` | `true` | Check once at startup |
+| `LNA_ONLY_PROVIDERS` | — | Comma-separated provider ids; overrides `providers.json` |
 
-Per-provider identity overrides use the provider id, e.g.
-`LNA_BOSTON_GLOBE_EMAIL`.
+### Home Assistant (optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MQTT_HOST` | — | Broker address. **Empty disables Home Assistant entirely** |
+| `MQTT_PORT` | `1883` | |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | — | If your broker requires auth |
+| `MQTT_BASE_TOPIC` | `library/news-access` | |
+| `HA_DISCOVERY_PREFIX` | `homeassistant` | Match your HA discovery prefix |
+
+### Alerting (optional)
+
+| Variable | Purpose |
+|---|---|
+| `LNA_NTFY_URL`, `LNA_NTFY_TOPIC` | [ntfy](https://ntfy.sh) alert when a renewal fails |
+| `LNA_NTFY_USERNAME` / `LNA_NTFY_PASSWORD`, or `LNA_NTFY_TOKEN` | ntfy auth |
+| `LNA_KUMA_PUSH_URL` | Uptime Kuma push URL, pinged only when every paper is fine |
+
+### Other
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `LNA_CONNECT_BASE` | `https://mhl.org/connect` | Your library's portal |
+| `LNA_NYT_COOKIE_FILE` | `/data/nyt_cookies.txt` | Where the NYT session lives |
+| `LNA_PROVIDERS_FILE` | bundled | Use your own `providers.json` |
+| `LNA_DATA_DIR` | `/data` | Where renewal state is stored |
+| `LNA_LOG_LEVEL` | `INFO` | |
+| `LNA_PORT` | `8781` | |
+| `LNA_REQUEST_TIMEOUT` | `45` | Per-request timeout, seconds |
+| `LNA_USER_AGENT` | Chrome | Sent to the library and publishers |
+| `MQTT_CLIENT_ID` | `library-news-access` | Change if it clashes on your broker |
+| `LNA_NYT_TOKEN` | bundled | NYT's public API token. Only needed if they rotate it before this repo does |
 
 ## Home Assistant
 
-With `MQTT_HOST` set, MQTT discovery creates **one device per newspaper** — so
-adding a paper adds a device rather than more prefixes on a shared one:
+Set `MQTT_HOST` and the service publishes over MQTT discovery — one device per
+newspaper, so adding a paper adds a device rather than cluttering an existing
+one:
 
-- `sensor.boston_globe_access_status` — `ok` / `failed`, with the last message,
-  failure streak, and notes as attributes
-- `sensor.boston_globe_access_expires` — timestamp
-- `binary_sensor.boston_globe_access_active` — `connectivity` class
+| Entity | Meaning |
+|---|---|
+| `sensor.<paper>_access_expires` | When the current pass runs out (timestamp) |
+| `binary_sensor.<paper>_access_active` | Whether you currently have access |
+| `sensor.<paper>_access_status` | `ok` or `failed`, with the last message and failure count as attributes |
 
-A useful automation is to alert when `binary_sensor.*_access_active` has been
-`off` for an hour — that means several renewal attempts failed in a row, which
-usually means an expired library card.
+A good automation: alert when `binary_sensor.*_access_active` has been `off`
+for an hour. That means several renewals failed in a row, which usually points
+at an expired library card or a dead NYT session — both need you, not a retry.
 
 ## Endpoints
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /` | Status page: per-newspaper state, expiry, redemption links. |
-| `GET /health` | `200` healthy / `503` with a `problems` array. Compose healthcheck uses this. |
-| `POST /run` | Force an immediate renewal pass. |
+| `GET /` | Status page |
+| `GET /health` | `200` when healthy, `503` with a `problems` list otherwise |
+| `POST /run` | Force an immediate check |
+
+## How it works
+
+Each newspaper is an entry in [`providers.json`](providers.json) with a mode:
+
+- **`ez_register`** — the library hands you to a publisher form that grants a
+  timed pass; re-submitting it renews. Used by the Globe.
+- **`nyt_redeem`** — the library hands you an access code, redeemed through
+  NYT's API against the browser session you exported.
+- **`link_only`** — resolves the current redemption link and shows it on the
+  status page, for papers that need a manual step.
+
+Renewal is driven by each pass's real expiry rather than a fixed timer, so
+restarting the container does not trigger a pointless renewal, and a pass you
+redeemed by hand is noticed rather than duplicated. State lives in
+`/data/state.json`.
+
+When a renewal fails the next attempt backs off — 5 min, 15 min, 1 h, 4 h,
+12 h, then daily. A transient blip recovers quickly, while a publisher that is
+genuinely refusing gets asked once a day rather than every half hour.
+
+No browser or JavaScript engine is involved at runtime, so the image stays
+small and there is no headless Chrome to babysit.
 
 ## Adding a newspaper
 
-Add an entry to `providers.json` and mount it (the commented-out volume in
-`compose.yaml`) — no rebuild needed.
+Add an entry to `providers.json` and mount it over the bundled one (there is a
+commented-out volume in `compose.yaml`) — no rebuild needed.
 
-For another library the connector `db_id` is the number in the
-`/connect/<db_id>` URL. To confirm a new newspaper is the renewable kind,
-submit the card by hand and see whether you land on a form that grants a
-*time-limited* window; if you land on a static redemption code, use
+To find a newspaper's id, look at the `/connect/<id>` link on your library's
+database list. Submit your card by hand once to see what you get: a publisher
+form granting a timed pass means `ez_register`; a static redemption link means
 `link_only`.
 
 ```json
@@ -185,31 +218,67 @@ submit the card by hand and see whether you land on a form that grants a
 }
 ```
 
-`field_map` maps a logical field to the publisher's input `name`s; listing two
-names (as with the password) fills both. Every other field already on the form
-— including ASP.NET's `__VIEWSTATE` — is echoed back automatically.
+`field_map` maps a logical field to the publisher's HTML input names; listing
+two names (as with the password) fills both. Hidden fields the form already
+carries — including ASP.NET's `__VIEWSTATE` — are echoed back automatically.
+
+The WSJ and Washington Post are both rolling passes and look automatable;
+contributions welcome.
+
+## Other libraries
+
+The `/connect/<id>` portal is a library product rather than something specific
+to one library, so this may work elsewhere with two changes:
+
+1. Point `LNA_CONNECT_BASE` at your library's portal
+2. Replace the `db_id` values in `providers.json` with your library's
+
+The newspapers behave the same way regardless of which library sent you, so the
+provider logic should carry over.
 
 ## Troubleshooting
 
-**"Not a valid library card number."** The library rejected the card. It is
-expired or mistyped; the automation cannot fix this.
+**"Not a valid library card number."** The library rejected the card — expired
+or mistyped. Nothing the service can do.
 
 **"the publisher's form no longer has the expected fields"** The publisher
-changed their form. Compare the live form's input names against `field_map`.
-This is deliberately a hard failure rather than a silent success.
+changed their form. Compare the live input names against `field_map`. This is
+deliberately a loud failure rather than a silent pretend-success.
 
-**"no registration form found at ..."** The card was accepted but the publisher
-sent us somewhere unexpected — usually a flow change on their side.
+**NYT: "session is no longer logged in"** The exported cookies have expired.
+Re-export and copy them in again.
 
-**Renewals succeed but the browser still asks me to subscribe.** The pass
-attaches to the Globe *account*, not to this container's throwaway session. Log
-in to bostonglobe.com normally as `LNA_EMAIL`.
+**Renewals succeed but I still hit a paywall.** The pass attaches to your
+*newspaper account*, not to this container. Sign in to the newspaper normally
+with the same email you configured.
 
-## Notes
+**Home Assistant shows nothing.** `MQTT_HOST` is probably unset — the status
+page reports whether MQTT is enabled.
 
-- No browser, JavaScript, or CAPTCHA is involved anywhere in the Globe chain,
-  which is why this is plain `requests` and not Playwright.
-- Credentials are environment-only; `.env` is gitignored. Nothing is written to
-  `/data` except renewal timestamps and the last status message.
-- MQTT, ntfy, and Kuma failures are logged and swallowed — they can never turn
-  a successful renewal into a failed run.
+## Security
+
+Credentials are read from the environment at runtime and never committed. The
+only things written to disk are `/data/state.json` (renewal timestamps and the
+last status message) and the NYT session file you supply.
+
+That session file is a live login to your NYT account — treat it like a
+password, and prefer a named volume over a bind mount in a shared directory.
+
+## Deployment
+
+CI publishes a multi-arch image (`linux/amd64` and `linux/arm64`) on every push
+to `main`:
+
+```
+ghcr.io/dimatx/library-news-access:latest
+```
+
+The bundled `compose.yaml` builds locally, which is what you want while
+developing. To run the published image instead, swap `build: .` for
+`image: ghcr.io/dimatx/library-news-access:latest` and supply the environment
+from your orchestrator.
+
+## Licence
+
+No licence has been set yet, so default copyright applies. If you want to use
+this, open an issue and one will be added.
