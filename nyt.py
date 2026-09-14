@@ -18,6 +18,7 @@ clock drift, restarts, and a pass being redeemed by hand in a browser.
 import http.cookiejar
 import logging
 import os
+import secrets
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -53,38 +54,33 @@ mutation redeemAccessCode($accessCode: String!, $campaignId: String!) {
     }
   ) {
     success
+    emailAddress
     subscriptionName
     subscriptionProducts
     subscriptionEndDate
     subscriptionDurationDays
+    purchaseToken
   }
 }
 """.strip()
 
-# NYT will say *why* it would refuse, which the redemption mutation itself will
-# not: it only ever answers with a generic error. Asking first turns a blind
-# retry into an informed decision.
-ELIGIBILITY_QUERY = """
-query getDigitalGiftUserProfileInfo($surfaceCode: String!, $digitalGiftCertificate: String!) {
-  userProfile(surfaceCode: $surfaceCode) {
-    emailAddress
-    digitalGiftEligibility(digitalGiftCertificate: $digitalGiftCertificate) {
-      reason
-      subscriptionName
-      subscriptionDurationDays
-      giftCertificateStatus
-    }
+# The browser always runs this immediately before redeeming. Captured from a
+# working browser redemption; skipping it was the difference between 414 failed
+# automated attempts and a browser that works every time.
+CHECK_QUERY = """
+query CheckAccessCode($surfaceCode: String!, $accessCode: String!) {
+  accessCode(surfaceCode: $surfaceCode, accessCode: $accessCode) {
+    expirationDate
+    status
+    subscriptionName
   }
 }
 """.strip()
 
-# Eligibility reasons we understand.
-#   ELIGIBLE                -> redeem now
-#   USER_ALREADY_SUBSCRIBER -> NYT still counts an existing subscription. Seen
-#                              while a lapsed pass sits at status=ACTIVE with an
-#                              endDate in the past; it clears server-side later.
-ELIGIBLE = "ELIGIBLE"
-ALREADY_SUBSCRIBER = "USER_ALREADY_SUBSCRIBER"
+# Surface the redeem landing page identifies itself with.
+DEFAULT_SURFACE_CODE = "access-code-redemption-lp-all_access"
+
+READY_FOR_REDEMPTION = "READY_FOR_REDEMPTION"
 
 # NYT reports this when the account already holds an active redemption. It is
 # the expected steady state, not a failure.
@@ -99,19 +95,6 @@ REDEMPTION_ERROR = "access_code_redemption_error"
 
 class SessionExpired(Exception):
     """The stored cookies are no longer a logged-in NYT session."""
-
-
-class NotYetEligible(Exception):
-    """NYT would refuse this redemption, and has said why.
-
-    Currently seen as USER_ALREADY_SUBSCRIBER while a lapsed pass is still
-    held at status=ACTIVE with an endDate in the past. It clears server-side
-    on NYT's own schedule, so this is a waiting state rather than a fault.
-    """
-
-    def __init__(self, reason: str, message: str):
-        super().__init__(message)
-        self.reason = reason
 
 
 class RedemptionRefused(Exception):
@@ -242,14 +225,28 @@ def parse_redeem_url(url: str) -> tuple[str, str]:
 
 
 def _graphql(session: requests.Session, name: str, query: str, variables: dict) -> dict:
-    """POST one GraphQL operation and return the parsed body."""
+    """POST one GraphQL operation and return the parsed body.
+
+    Headers mirror a real browser request captured from a working redemption.
+    ``x-pageview-id`` and ``x-plid`` are per-pageview tracking ids the NYT
+    front-end always sends; they are generated fresh per call in the same
+    24-character url-safe form.
+    """
     headers = {
+        "accept": "*/*",
         "content-type": "application/json",
         "nyt-app-type": NYT_APP_TYPE,
         "nyt-app-version": NYT_APP_VERSION,
         "nyt-token": NYT_TOKEN,
-        "Origin": "https://www.nytimes.com",
-        "Referer": REDEEM_REFERER,
+        "origin": "https://www.nytimes.com",
+        # The browser sends the site root here, not the activate-access URL.
+        "referer": "https://www.nytimes.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        "x-nyt-internal-meter-override": "undefined",
+        "x-pageview-id": secrets.token_urlsafe(18),
+        "x-plid": secrets.token_urlsafe(18),
     }
     payload = {"operationName": name, "variables": variables, "query": query}
     try:
@@ -271,31 +268,32 @@ def _graphql(session: requests.Session, name: str, query: str, variables: dict) 
         ) from exc
 
 
-def eligibility(session: requests.Session, access_code: str) -> dict:
-    """Ask NYT whether this account could redeem this code right now.
+def check_access_code(
+    session: requests.Session, access_code: str, surface_code: str = DEFAULT_SURFACE_CODE
+) -> dict:
+    """Run the CheckAccessCode query the browser always issues before redeeming.
 
-    Returns ``{"reason": str, "certificate_status": str}``. ``reason`` is
-    ``ELIGIBLE`` when redemption should work; anything else explains the
-    refusal that ``redeem`` would otherwise report only as a generic error.
+    Returns ``{"status", "expiration_date", "subscription_name"}``. Besides
+    whatever server-side effect it has, ``status`` is a genuine health signal
+    for the library's certificate: ``READY_FOR_REDEMPTION`` means the code
+    itself is fine, so a subsequent refusal is about the account, not the code.
     """
     body = _graphql(
         session,
-        "getDigitalGiftUserProfileInfo",
-        ELIGIBILITY_QUERY,
-        {"surfaceCode": "access-code", "digitalGiftCertificate": access_code},
+        "CheckAccessCode",
+        CHECK_QUERY,
+        {"accessCode": access_code, "surfaceCode": surface_code},
     )
     errors = body.get("errors") or []
     if errors:
-        # Not fatal: fall through and let the redemption attempt decide.
-        _LOGGER.debug("NYT eligibility query returned errors: %s", errors)
-        return {"reason": "", "certificate_status": ""}
+        messages = "; ".join(str(e.get("message", e)) for e in errors)
+        raise RedemptionRefused(f"NYT rejected the access code check: {messages}")
 
-    profile = (body.get("data") or {}).get("userProfile") or {}
-    gift = profile.get("digitalGiftEligibility") or {}
+    details = (body.get("data") or {}).get("accessCode") or {}
     return {
-        "reason": gift.get("reason") or "",
-        "certificate_status": gift.get("giftCertificateStatus") or "",
-        "email": profile.get("emailAddress") or "",
+        "status": details.get("status") or "",
+        "expiration_date": details.get("expirationDate") or "",
+        "subscription_name": details.get("subscriptionName") or "",
     }
 
 

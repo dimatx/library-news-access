@@ -281,25 +281,21 @@ def _run_nyt_redeem(
             "code": access_code,
         }
 
-    # Ask NYT why it might refuse, for the log only. This uses the *gift*
-    # eligibility query, which is the nearest thing that explains itself; the
-    # redemption mutation only ever answers with a generic error. It is NOT
-    # known to govern the access-code path, so it must not gate the attempt --
-    # a browser redemption succeeds while this reports USER_ALREADY_SUBSCRIBER.
+    # The browser always runs CheckAccessCode immediately before redeeming, and
+    # skipping it is the one substantive difference between our request and a
+    # working browser redemption. It also tells us whether the library's
+    # certificate itself is healthy, which the redemption mutation never does.
     try:
-        elig = nyt.eligibility(session, access_code)
-        if elig.get("reason"):
-            _LOGGER.info(
-                "%s: NYT gift-eligibility says %s (certificate %s) - advisory only",
-                provider.name, elig["reason"], elig.get("certificate_status") or "?",
-            )
-    except nyt.SessionExpired as exc:
-        # Diagnostic only; never let it block a redemption.
-        _LOGGER.debug("%s: eligibility probe failed: %s", provider.name, exc)
+        check = nyt.check_access_code(session, access_code)
+        _LOGGER.info(
+            "%s: access code is %s (valid until %s)",
+            provider.name,
+            check.get("status") or "?",
+            check.get("expiration_date") or "?",
+        )
+    except (nyt.RedemptionRefused, nyt.SessionExpired) as exc:
+        raise ConnectorError(str(exc)) from exc
 
-    # The library hands out a single static code, so there is no "fresher" code
-    # to fetch. If NYT refuses it we surface that as a failure and let the
-    # backoff slow us down, rather than guessing at a reason.
     try:
         result = nyt.redeem(session, access_code, campaign_id)
     except (nyt.RedemptionRefused, nyt.SessionExpired) as exc:
@@ -323,8 +319,19 @@ def _run_nyt_redeem(
             "code": access_code,
         }
 
-    expires_at = result.get("expires_at")
     days = result.get("duration_days")
+
+    # The mutation's own subscriptionEndDate has been seen to disagree with the
+    # subscription record NYT then creates, so re-read the authoritative value
+    # rather than publishing the one the mutation echoed back.
+    expires_at = None
+    try:
+        state = nyt.account_state(session, campaign_id)
+        expires_at = state.get("expires_at")
+    except nyt.SessionExpired:
+        pass
+    if not expires_at:
+        expires_at = result.get("expires_at")
     if not expires_at and provider.access_hours:
         expires_at = (
             now + timedelta(hours=provider.access_hours)
