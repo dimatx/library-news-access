@@ -94,32 +94,64 @@ Redeeming while a pass is already live returns
 `{"errors":[{"message":"access_code_already_redeemed"}]}` with HTTP `200`,
 which is treated as "still active", not a failure.
 
-### Open issue: the redemption call has never succeeded
+### Resolved: the missing CheckAccessCode call
 
-Between 2026-09-04 08:10Z and 2026-09-13 00:13Z the service attempted
-redemption 413 times and every one returned `access_code_redemption_error`.
-In the same window a manual browser redemption worked first try.
+Between 2026-09-04 08:10Z and 2026-09-14 00:36Z every automated redemption
+returned `access_code_redemption_error`, while browser redemptions on the same
+account and code succeeded every time. A HAR capture of a working browser
+redemption showed why: the browser issues **two** calls, in order.
 
-Ruled out by measurement:
+```
+POST /graphql/v2   CheckAccessCode   (query)    -> status READY_FOR_REDEMPTION
+POST /graphql/v2   redeemAccessCode  (mutation) -> success: true
+```
+
+We only ever sent the mutation. Its body is otherwise effectively identical to
+ours, so the absent preceding query is the substantive difference.
+
+The captured request headers are now matched too: `x-pageview-id` and `x-plid`
+(per-pageview tracking ids, regenerated per call in the same 24-character
+url-safe form), `x-nyt-internal-meter-override`, the `sec-fetch-*` set, and
+`referer`, which the browser sends as the **site root** rather than the
+activate-access URL.
+
+Ruled out by measurement along the way, so none of these need revisiting:
 
 * **Datacenter IP** — reproduced identically from a residential IP.
-* **Dead session** — the data layer reports `isLoggedIn: true` throughout.
-* **Stale bot cookies** — walking the redeem and activate pages first (which is
-  what a browser does) did not change the outcome, and the `datadome` cookie
-  was neither rejected nor reissued.
-* **API drift** — the front-end chunk hash is unchanged, and NYT answers with
-  its own domain errors, so the request is understood.
+* **Dead session** — the control query `ssoEmailDomainPassEligibility` returned
+  the account email over the same cookies and headers, so samizdat honours our
+  session; only this one mutation was refused.
+* **Expired cookies** — the jar carries seven, including `NYT-MPS` (dead for 10
+  days). Dropping them, and sending only the live ones, both changed nothing.
+* **Stale bot cookies / API drift** — walking the redeem and activate pages
+  first changed nothing, and the token, app version and endpoint all match the
+  live page exactly.
 
-Two hypotheses remain, and they are not yet distinguishable:
+Two wrong conclusions were reached before the HAR, both worth remembering:
 
-1. The request is missing something the browser sends.
-2. There was a temporary block or cooldown that happened to lapse right when
-   the manual redemption was tried.
+1. *"The code is spent, one redemption per account."* Disproved within the hour
+   by a successful browser redemption. The evidence was a browser showing "This
+   code has already been redeemed" — which was the response to clicking Redeem
+   a *second* time, moments after the first click had already worked.
+   `CheckAccessCode` now reports the certificate is valid until **2031-04-21**.
+2. *"USER_ALREADY_SUBSCRIBER is the blocker."* That came from
+   `digitalGiftEligibility`, which answers for the **gift** path. The browser
+   redeemed successfully while that query was reporting it.
 
-The manual redemption landed about one minute before the next scheduled tick,
-so the automation never got a clean attempt afterwards. The decisive test is
-the next natural expiry: if the automated attempt succeeds then, hypothesis 2
-holds and the request was always fine.
+Both mistakes shared a shape: inferring a cause from a single observation
+without a control, when a control was cheaply available.
+
+### Other NYT notes
+
+* `redeemAccessCode` returns a `subscriptionEndDate` that has been seen to
+  disagree with the subscription record NYT then creates (`04:00Z` against a
+  true +24h). The published expiry is re-read from the account state instead.
+* Redeeming while a pass is already live returns
+  `{"errors":[{"message":"access_code_already_redeemed"}]}` with HTTP `200`,
+  which is treated as "still active", not a failure.
+* NYT keeps `hasActiveEntitlements` set for hours after a pass has really
+  lapsed, still carrying the stale `endDate`, so the end date is authoritative.
+* **`isLoggedIn` lives under `session`, not `user`.**
 
 ## How the earlier conclusion went wrong
 

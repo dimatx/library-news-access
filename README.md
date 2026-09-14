@@ -17,21 +17,13 @@ codes:
 | Newspaper | Pass length | Automated? |
 |---|---|---|
 | **Boston Globe** | 72 hours | **Yes** — resubmits the registration form |
-| **New York Times** | 24 hours | **Partly** — see the open issue below |
+| **New York Times** | 24 hours | **Yes** — `CheckAccessCode` then `redeemAccessCode` |
 | Wall Street Journal | 3 days | Not yet built |
 | Washington Post | 7 days | Not yet built |
 | Eagle Tribune (NewsBank) | none | **No** — no account, just a throwaway session |
 
 Eagle Tribune is the only permanent exclusion: card entry mints a browsing
 session with no account behind it, so there is nothing to keep alive.
-
-> **Open issue: NYT automated redemption.** Reading entitlement state works,
-> but the redemption call itself has not yet been observed to succeed. For ten
-> days NYT answered `access_code_redemption_error` while a manual redemption in
-> a browser — same account, same code — worked immediately. The session is
-> valid and the request is understood (NYT returns its own domain errors), so
-> the cause is still unknown. Failures now back off instead of retrying every
-> 30 minutes.
 
 ## Quick start
 

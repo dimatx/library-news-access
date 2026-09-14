@@ -27,7 +27,7 @@
     "access_hours": 24,
     "renew_every_hours": 0,
     "entitlement": "AAA",
-    "notes": "24-hour pass from a bulk certificate. Reading entitlement state works; the redemption call itself has not yet been observed to succeed from here (NYT answers access_code_redemption_error while a manual browser redemption on the same account and code works). See FINDINGS.md. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
+    "notes": "24-hour pass from a bulk certificate, valid until 2031. Redemption is two GraphQL calls in sequence, mirroring the browser: CheckAccessCode then redeemAccessCode. Sending only the mutation fails with a generic access_code_redemption_error. Needs a cookies.txt exported once from a logged-in browser; NYT's login page is behind DataDome and is never scripted."
   },
 
   {
