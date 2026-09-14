@@ -281,36 +281,21 @@ def _run_nyt_redeem(
             "code": access_code,
         }
 
-    # Ask NYT whether it would accept the code before spending an attempt on
-    # it. The redemption mutation only ever reports a generic error, whereas
-    # the eligibility query names the actual reason.
+    # Ask NYT why it might refuse, for the log only. This uses the *gift*
+    # eligibility query, which is the nearest thing that explains itself; the
+    # redemption mutation only ever answers with a generic error. It is NOT
+    # known to govern the access-code path, so it must not gate the attempt --
+    # a browser redemption succeeds while this reports USER_ALREADY_SUBSCRIBER.
     try:
         elig = nyt.eligibility(session, access_code)
+        if elig.get("reason"):
+            _LOGGER.info(
+                "%s: NYT gift-eligibility says %s (certificate %s) - advisory only",
+                provider.name, elig["reason"], elig.get("certificate_status") or "?",
+            )
     except nyt.SessionExpired as exc:
-        raise ConnectorError(str(exc)) from exc
-
-    reason = elig.get("reason")
-    if reason == nyt.ALREADY_SUBSCRIBER:
-        _LOGGER.info(
-            "%s: NYT still counts an active subscription (%s); not redeeming yet",
-            provider.name, reason,
-        )
-        return {
-            "ok": True,
-            "status": "waiting",
-            "message": (
-                "Pass lapsed, but NYT still counts the expired one as active "
-                "(USER_ALREADY_SUBSCRIBER). It clears on their side; will "
-                "redeem once it does."
-            ),
-            "url": location,
-            "renewed_at": None,
-            "expires_at": None,
-            "keep_expires": True,
-        }
-
-    if reason and reason != nyt.ELIGIBLE:
-        _LOGGER.info("%s: NYT reports ineligible: %s", provider.name, reason)
+        # Diagnostic only; never let it block a redemption.
+        _LOGGER.debug("%s: eligibility probe failed: %s", provider.name, exc)
 
     # The library hands out a single static code, so there is no "fresher" code
     # to fetch. If NYT refuses it we surface that as a failure and let the
