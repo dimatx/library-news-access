@@ -321,21 +321,38 @@ def _run_nyt_redeem(
 
     days = result.get("duration_days")
 
-    # The mutation's own subscriptionEndDate has been seen to disagree with the
-    # subscription record NYT then creates, so re-read the authoritative value
-    # rather than publishing the one the mutation echoed back.
+    # Work out the expiry to publish. NYT's data layer lags a redemption: for
+    # a while after one it still serves the *previous* subscription record, so
+    # reading it straight back can hand us the expiry that just lapsed. The
+    # mutation's own subscriptionEndDate has separately been seen to disagree
+    # with the record NYT then creates. So take the first candidate that is
+    # actually in the future, and fall back to the provider's known pass
+    # length, which is exact right after a successful redemption.
     expires_at = None
+    candidates = []
     try:
-        state = nyt.account_state(session, campaign_id)
-        expires_at = state.get("expires_at")
+        fresh = nyt.account_state(session, campaign_id)
+        candidates.append(fresh.get("expires_at"))
     except nyt.SessionExpired:
         pass
-    if not expires_at:
-        expires_at = result.get("expires_at")
-    if not expires_at and provider.access_hours:
-        expires_at = (
-            now + timedelta(hours=provider.access_hours)
-        ).isoformat(timespec="seconds")
+    candidates.append(result.get("expires_at"))
+    if provider.access_hours:
+        candidates.append(
+            (now + timedelta(hours=provider.access_hours)).isoformat(timespec="seconds")
+        )
+
+    for candidate in candidates:
+        parsed = state_mod.parse_ts(candidate)
+        if parsed and parsed > now:
+            expires_at = candidate
+            break
+    else:
+        # Nothing plausible. Publish nothing rather than a stale past date,
+        # which would read as "no access" despite the redemption succeeding.
+        _LOGGER.warning(
+            "%s: redeemed, but no usable expiry (candidates: %s)",
+            provider.name, candidates,
+        )
 
     return {
         "ok": True,
